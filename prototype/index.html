@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DentiGuard</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #ffffff;
+  }
+  #stage {
+    position: fixed;
+    inset: 0;
+  }
+  canvas {
+    display: block;
+    touch-action: none;
+  }
+  #picker {
+    position: fixed;
+    right: 24px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    gap: 10px;
+    z-index: 10;
+  }
+  #satSquare, #hueStrip {
+    position: relative;
+    border-radius: 6px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.25);
+    cursor: crosshair;
+    touch-action: none;
+  }
+  #satSquare canvas, #hueStrip canvas {
+    display: block;
+    border-radius: 6px;
+  }
+  .cursor {
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+    box-shadow: 0 0 0 1.5px rgba(0,0,0,0.5);
+    transform: translate(-50%, -50%);
+  }
+  #satCursor {
+    width: 12px;
+    height: 12px;
+    border: 2px solid #fff;
+  }
+  #hueCursor {
+    left: 0;
+    right: 0;
+    height: 4px;
+    border-radius: 2px;
+    border: 2px solid #fff;
+    transform: translateY(-50%);
+  }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="picker">
+  <div id="satSquare">
+    <canvas width="150" height="150"></canvas>
+    <div id="satCursor" class="cursor"></div>
+  </div>
+  <div id="hueStrip">
+    <canvas width="18" height="150"></canvas>
+    <div id="hueCursor" class="cursor"></div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "./vendor/controls/OrbitControls.js";
+import { GLTFLoader } from "./vendor/loaders/GLTFLoader.js";
+
+const stage = document.getElementById("stage");
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xffffff);
+
+const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.01, 100);
+camera.position.set(1.4, 0.9, 1.6);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+stage.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.rotateSpeed = 0.9;
+controls.enablePan = false;
+controls.minDistance = 0.6;
+controls.maxDistance = 4;
+controls.target.set(0, 0.15, 0);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.1));
+const key = new THREE.DirectionalLight(0xffffff, 2.0);
+key.position.set(2, 3, 2);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0xffffff, 0.8);
+fill.position.set(-2, 1, -1.5);
+scene.add(fill);
+
+const loader = new GLTFLoader();
+loader.load("./assets/model.glb", (gltf) => {
+  const model = gltf.scene;
+
+  const box = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  model.position.sub(center);
+  model.position.y += size.y / 2;
+
+  scene.add(model);
+});
+
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+window.addEventListener("resize", onResize);
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+// --- Background color picker (saturation/value square + hue strip) ---
+
+function hsvToRgb(h, s, v) {
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; b = 0; }
+  else if (h < 120) { r = x; g = c; b = 0; }
+  else if (h < 180) { r = 0; g = c; b = x; }
+  else if (h < 240) { r = 0; g = x; b = c; }
+  else if (h < 300) { r = x; g = 0; b = c; }
+  else { r = c; g = 0; b = x; }
+  return { r: r + m, g: g + m, b: b + m };
+}
+
+let hue = 0;
+let sat = 0;
+let val = 1;
+
+const satEl = document.getElementById("satSquare");
+const satCanvas = satEl.querySelector("canvas");
+const satCtx = satCanvas.getContext("2d");
+const satCursor = document.getElementById("satCursor");
+
+const hueEl = document.getElementById("hueStrip");
+const hueCanvas = hueEl.querySelector("canvas");
+const hueCtx = hueCanvas.getContext("2d");
+const hueCursor = document.getElementById("hueCursor");
+
+function drawSatSquare() {
+  const w = satCanvas.width, h = satCanvas.height;
+  satCtx.fillStyle = `hsl(${hue}, 100%, 50%)`;
+  satCtx.fillRect(0, 0, w, h);
+
+  const whiteGrad = satCtx.createLinearGradient(0, 0, w, 0);
+  whiteGrad.addColorStop(0, "rgba(255,255,255,1)");
+  whiteGrad.addColorStop(1, "rgba(255,255,255,0)");
+  satCtx.fillStyle = whiteGrad;
+  satCtx.fillRect(0, 0, w, h);
+
+  const blackGrad = satCtx.createLinearGradient(0, 0, 0, h);
+  blackGrad.addColorStop(0, "rgba(0,0,0,0)");
+  blackGrad.addColorStop(1, "rgba(0,0,0,1)");
+  satCtx.fillStyle = blackGrad;
+  satCtx.fillRect(0, 0, w, h);
+}
+
+function drawHueStrip() {
+  const w = hueCanvas.width, h = hueCanvas.height;
+  const grad = hueCtx.createLinearGradient(0, 0, 0, h);
+  for (let i = 0; i <= 360; i += 30) {
+    grad.addColorStop(i / 360, `hsl(${i}, 100%, 50%)`);
+  }
+  hueCtx.fillStyle = grad;
+  hueCtx.fillRect(0, 0, w, h);
+}
+
+function applyBackground() {
+  const { r, g, b } = hsvToRgb(hue, sat, val);
+  scene.background.setRGB(r, g, b, THREE.SRGBColorSpace);
+  document.body.style.background = `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)})`;
+}
+
+function updateCursors() {
+  const sw = satCanvas.width, sh = satCanvas.height;
+  satCursor.style.left = `${sat * sw}px`;
+  satCursor.style.top = `${(1 - val) * sh}px`;
+  const hh = hueCanvas.height;
+  hueCursor.style.top = `${(hue / 360) * hh}px`;
+}
+
+function pointFromEvent(target, evt) {
+  const rect = target.getBoundingClientRect();
+  const x = Math.min(Math.max(evt.clientX - rect.left, 0), rect.width);
+  const y = Math.min(Math.max(evt.clientY - rect.top, 0), rect.height);
+  return { x, y, w: rect.width, h: rect.height };
+}
+
+function bindDrag(el, onMove) {
+  let dragging = false;
+  const move = (evt) => {
+    if (!dragging) return;
+    onMove(pointFromEvent(el, evt));
+  };
+  el.addEventListener("pointerdown", (evt) => {
+    dragging = true;
+    el.setPointerCapture(evt.pointerId);
+    onMove(pointFromEvent(el, evt));
+  });
+  el.addEventListener("pointermove", move);
+  el.addEventListener("pointerup", () => { dragging = false; });
+  el.addEventListener("pointercancel", () => { dragging = false; });
+}
+
+bindDrag(satEl, ({ x, y, w, h }) => {
+  sat = x / w;
+  val = 1 - y / h;
+  updateCursors();
+  applyBackground();
+});
+
+bindDrag(hueEl, ({ y, h }) => {
+  hue = (y / h) * 360;
+  drawSatSquare();
+  updateCursors();
+  applyBackground();
+});
+
+drawSatSquare();
+drawHueStrip();
+updateCursors();
+</script>
+</body>
+</html>
